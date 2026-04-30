@@ -1,8 +1,15 @@
-const API_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjY1MjIzNjAwNiwiYWFpIjoxMSwidWlkIjo5NjQ3NjY4MCwiaWFkIjoiMjAyNi0wNC0zMFQxMTo0ODo0MS44NzZaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MzI1NTc4OTEsInJnbiI6ImV1YzEifQ.sflERYBS0sZEyZ_xoTDIAeTsAYXVKwyqJZVkZmY1Uhc";
-
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
+  }
+
+  const API_TOKEN = process.env.MONDAY_API_TOKEN;
+
+  if (!API_TOKEN) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "API token not configured" }),
+    };
   }
 
   try {
