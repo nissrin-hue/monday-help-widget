@@ -33,10 +33,10 @@ async function getCurrentUser() {
 // Get items on the board where Submitter = current user
 async function getMyCases(userId) {
   const data = await mondayQuery(`
-    query GetMyCases($boardId: ID!, $userId: [CompareValue!]!) {
-      boards(ids: [$boardId]) {
+    query {
+      boards(ids: [${BOARD_ID}]) {
         items_page(limit: 50, query_params: {
-          rules: [{ column_id: "${COL.submitter}", compare_value: $userId }]
+          rules: [{ column_id: "${COL.submitter}", compare_value: "person-${userId}", operator: any_of }]
         }) {
           items {
             id
@@ -50,7 +50,7 @@ async function getMyCases(userId) {
         }
       }
     }
-  `, { boardId: BOARD_ID, userId: [`person-${userId}`] });
+  `);
   return data.boards[0].items_page.items;
 }
 
