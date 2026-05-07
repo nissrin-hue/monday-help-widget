@@ -1,57 +1,62 @@
 exports.handler = async (event) => {
-  if (event.httpMethod === "OPTIONS") {
+  const { code, error } = event.queryStringParameters || {};
+
+  if (error) {
     return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-      },
-      body: "",
+      statusCode: 302,
+      headers: { Location: `/?error=${error}` },
     };
   }
 
-  if (event.httpMethod !== "GET") {
-    return { statusCode: 405, body: "Method Not Allowed" };
+  if (!code) {
+    return {
+      statusCode: 302,
+      headers: { Location: "/?error=no_code" },
+    };
   }
 
   try {
-    const { query, token } = JSON.parse(event.body);
+    const params = new URLSearchParams();
+    params.append("client_id",     process.env.MONDAY_CLIENT_ID);
+    params.append("client_secret", process.env.MONDAY_CLIENT_SECRET);
+    params.append("redirect_uri",  process.env.MONDAY_REDIRECT_URI);
+    params.append("code",          code);
 
-    // Use user's own OAuth token if provided, otherwise fall back to app token
-    const API_TOKEN = token || process.env.MONDAY_API_TOKEN;
+    const response = await fetch("https://auth.monday.com/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
 
-    if (!API_TOKEN) {
+    const text = await response.text();
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
       return {
-        statusCode: 401,
-        body: JSON.stringify({ error: "No token provided" }),
+        statusCode: 302,
+        headers: { Location: "/?error=parse_failed" },
       };
     }
 
-    const response = await fetch("https://api.monday.com/v2", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": API_TOKEN,
-        "API-Version": "2024-01",
-      },
-      body: JSON.stringify({ query }),
-    });
-
-    const data = await response.json();
+    if (!data.access_token) {
+      return {
+        statusCode: 302,
+        headers: { Location: `/?error=${data.error || "no_token"}` },
+      };
+    }
 
     return {
-      statusCode: 200,
+      statusCode: 302,
       headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Content-Type": "application/json",
+        Location: `/?token=${data.access_token}`,
       },
-      body: JSON.stringify(data),
     };
   } catch (err) {
     return {
-      statusCode: 500,
-      body: JSON.stringify({ error: err.message }),
+      statusCode: 302,
+      headers: { Location: `/?error=${encodeURIComponent(err.message)}` },
     };
   }
 };
