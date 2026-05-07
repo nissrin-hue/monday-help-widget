@@ -1,9 +1,6 @@
 import { useState, useEffect } from "react";
-import mondaySdk from "monday-sdk-js";
 
-// ── CONFIG ────────────────────────────────────────────────────────────────────
 const BOARD_ID = "5095581355";
-const monday = mondaySdk();
 
 const COL = {
   submitter:   "multiple_person_mm2xtr55",
@@ -13,22 +10,24 @@ const COL = {
   status:      "color_mm2xvd7",
 };
 
-// ── MONDAY API HELPER ─────────────────────────────────────────────────────────
-async function mondayQuery(query, variables = {}) {
-  const res = await monday.api(query, { variables });
-  if (res.errors) throw new Error(res.errors[0].message);
-  return res.data;
+async function mondayQuery(query) {
+  const res = await fetch("/.netlify/functions/monday-proxy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const data = await res.json();
+  if (data.errors) throw new Error(data.errors[0].message);
+  return data.data;
 }
 
-// Get current logged-in user via SDK
 async function getCurrentUser() {
-  const res = await mondayQuery(`query { me { id name email } }`);
-  return res.me;
+  const data = await mondayQuery(`query { me { id name email } }`);
+  return data.me;
 }
 
-// Get items submitted by this user
 async function getMyCases(userId) {
-  const res = await mondayQuery(`
+  const data = await mondayQuery(`
     query {
       boards(ids: [${BOARD_ID}]) {
         items_page(limit: 50, query_params: {
@@ -47,10 +46,9 @@ async function getMyCases(userId) {
       }
     }
   `);
-  return res.boards[0].items_page.items;
+  return data.boards[0].items_page.items;
 }
 
-// Create a new item
 async function createItem(user, helpType, description, urgency) {
   const columnValues = JSON.stringify({
     [COL.submitter]:   { personsAndTeams: [{ id: parseInt(user.id), kind: "person" }] },
@@ -71,7 +69,6 @@ async function createItem(user, helpType, description, urgency) {
   `);
 }
 
-// ── BOARD DATA ────────────────────────────────────────────────────────────────
 const HELP_TYPES = [
   { label: "Technical issue",      icon: "💻", color: "#fdab3d" },
   { label: "Access request",       icon: "🔑", color: "#00c875" },
@@ -94,7 +91,6 @@ const STATUS_MAP = {
   "Done":              { color: "#00b461", bg: "#EDFBF4" },
 };
 
-// ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
 function Spinner({ label = "Loading..." }) {
   return (
     <div style={{ textAlign: "center", padding: "40px 0" }}>
@@ -135,18 +131,11 @@ function Avatar({ name, size = 28 }) {
   );
 }
 
-// ── LOADING SCREEN ────────────────────────────────────────────────────────────
 function LoadingUser({ onLoaded, onError }) {
   useEffect(() => {
-    monday.listen("context", async () => {
-      try {
-        const user = await getCurrentUser();
-        onLoaded(user);
-      } catch {
-        onError("Could not detect your monday.com profile. Please refresh.");
-      }
-    });
-    monday.execute("valueCreatedForUser");
+    getCurrentUser()
+      .then(user => onLoaded(user))
+      .catch(() => onError("Could not detect your monday.com profile. Please refresh."));
   }, []);
 
   return (
@@ -167,7 +156,6 @@ function LoadingUser({ onLoaded, onError }) {
   );
 }
 
-// ── HOME ──────────────────────────────────────────────────────────────────────
 function HomeScreen({ user, onNewRequest, onMyCases }) {
   return (
     <div style={{ padding: "28px 24px" }}>
@@ -181,9 +169,7 @@ function HomeScreen({ user, onNewRequest, onMyCases }) {
         <h2 style={{ fontSize: 20, fontWeight: 700, color: "white", margin: 0 }}>{user.name}</h2>
         {user.email && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "4px 0 0" }}>{user.email}</p>}
       </div>
-
       <p style={{ fontSize: 13, color: "#64748B", marginBottom: 14 }}>How can we help you today?</p>
-
       {[
         { icon: "📝", label: "Submit a Request", sub: "Report an IT issue or need",   color: "#4F8EF7", bg: "#EEF4FF", action: onNewRequest },
         { icon: "📂", label: "My Cases",          sub: "Track your past IT requests", color: "#4FC4A4", bg: "#EDFDF8", action: onMyCases  },
@@ -209,7 +195,6 @@ function HomeScreen({ user, onNewRequest, onMyCases }) {
   );
 }
 
-// ── NEW REQUEST ───────────────────────────────────────────────────────────────
 function NewRequestScreen({ user, onBack, onDone }) {
   const [helpType,    setHelpType]    = useState("");
   const [description, setDescription] = useState("");
@@ -330,7 +315,6 @@ function NewRequestScreen({ user, onBack, onDone }) {
   );
 }
 
-// ── DONE ──────────────────────────────────────────────────────────────────────
 function DoneScreen({ onHome }) {
   return (
     <div style={{ padding: "48px 24px", textAlign: "center" }}>
@@ -345,7 +329,6 @@ function DoneScreen({ onHome }) {
   );
 }
 
-// ── MY CASES ──────────────────────────────────────────────────────────────────
 function MyCasesScreen({ user, onBack }) {
   const [cases,   setCases]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -417,7 +400,7 @@ function MyCasesScreen({ user, onBack }) {
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {h && <span style={{ fontSize: 11, color: "#475569", background: "#F1F5F9", borderRadius: 6, padding: "2px 8px" }}>{h.icon} {c.helpType}</span>}
-                    {u && <span style={{ fontSize: 11, color: u.color, background: u.color + "12", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>! {c.urgency}</span>}
+                    {u && <span style={{ fontSize: 11, color: u.color, background: u.color + "12", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>{c.urgency}</span>}
                     {c.created && <span style={{ fontSize: 11, color: "#CBD5E1", padding: "2px 4px" }}>{c.created}</span>}
                   </div>
                 </div>
@@ -435,7 +418,6 @@ function MyCasesScreen({ user, onBack }) {
   );
 }
 
-// ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState("loading");
   const [user,   setUser]   = useState(null);
