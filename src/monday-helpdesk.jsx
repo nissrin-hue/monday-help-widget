@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
+import mondaySdk from "monday-sdk-js";
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const BOARD_ID = "5095581355";
+const monday = mondaySdk();
 
-// Column IDs from your board
 const COL = {
   submitter:   "multiple_person_mm2xtr55",
   helpType:    "single_selectxtrjfvr",
@@ -14,25 +15,20 @@ const COL = {
 
 // ── MONDAY API HELPER ─────────────────────────────────────────────────────────
 async function mondayQuery(query, variables = {}) {
-  const res = await fetch("/.netlify/functions/monday-proxy", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  const data = await res.json();
-  if (data.errors) throw new Error(data.errors[0].message);
-  return data.data;
+  const res = await monday.api(query, { variables });
+  if (res.errors) throw new Error(res.errors[0].message);
+  return res.data;
 }
 
-// Get current logged-in user
+// Get current logged-in user via SDK
 async function getCurrentUser() {
-  const data = await mondayQuery(`query { me { id name email } }`);
-  return data.me;
+  const res = await mondayQuery(`query { me { id name email } }`);
+  return res.me;
 }
 
-// Get items on the board where Submitter = current user
+// Get items submitted by this user
 async function getMyCases(userId) {
-  const data = await mondayQuery(`
+  const res = await mondayQuery(`
     query {
       boards(ids: [${BOARD_ID}]) {
         items_page(limit: 50, query_params: {
@@ -51,10 +47,10 @@ async function getMyCases(userId) {
       }
     }
   `);
-  return data.boards[0].items_page.items;
+  return res.boards[0].items_page.items;
 }
 
-// Create a new item on the board
+// Create a new item
 async function createItem(user, helpType, description, urgency) {
   const columnValues = JSON.stringify({
     [COL.submitter]:   { personsAndTeams: [{ id: parseInt(user.id), kind: "person" }] },
@@ -65,21 +61,19 @@ async function createItem(user, helpType, description, urgency) {
   });
 
   await mondayQuery(`
-    mutation CreateItem($boardId: ID!, $name: String!, $columnValues: JSON!) {
-      create_item(board_id: $boardId, item_name: $name, column_values: $columnValues) {
-        id
-      }
+    mutation {
+      create_item(
+        board_id: ${BOARD_ID},
+        item_name: "IT Request - ${user.name}",
+        column_values: ${JSON.stringify(columnValues)}
+      ) { id }
     }
-  `, {
-    boardId: BOARD_ID,
-    name: `IT Request – ${user.name}`,
-    columnValues,
-  });
+  `);
 }
 
 // ── BOARD DATA ────────────────────────────────────────────────────────────────
 const HELP_TYPES = [
-  { label: "Technical issue",      icon: "🖥️", color: "#fdab3d" },
+  { label: "Technical issue",      icon: "💻", color: "#fdab3d" },
   { label: "Access request",       icon: "🔑", color: "#00c875" },
   { label: "Account/password help",icon: "🔒", color: "#9d50dd" },
   { label: "Other",                icon: "💬", color: "#c4c4c4" },
@@ -92,7 +86,6 @@ const URGENCY_LEVELS = [
   { label: "Critical", color: "#007eb5", bg: "#EEF4FF", desc: "Affecting multiple people" },
 ];
 
-// Exact status labels & colours from your board
 const STATUS_MAP = {
   "Incoming response": { color: "#8f8f8f", bg: "#F4F4F4" },
   "Working on it":     { color: "#e99729", bg: "#FFF5E6" },
@@ -145,9 +138,15 @@ function Avatar({ name, size = 28 }) {
 // ── LOADING SCREEN ────────────────────────────────────────────────────────────
 function LoadingUser({ onLoaded, onError }) {
   useEffect(() => {
-    getCurrentUser()
-      .then(user => onLoaded(user))
-      .catch(() => onError("Could not detect your monday.com profile. Please refresh."));
+    monday.listen("context", async () => {
+      try {
+        const user = await getCurrentUser();
+        onLoaded(user);
+      } catch {
+        onError("Could not detect your monday.com profile. Please refresh.");
+      }
+    });
+    monday.execute("valueCreatedForUser");
   }, []);
 
   return (
@@ -179,15 +178,15 @@ function HomeScreen({ user, onNewRequest, onMyCases }) {
       }}>
         <div style={{ position: "absolute", top: -20, right: -20, width: 80, height: 80, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
         <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, margin: "0 0 4px" }}>Hello,</p>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: "white", margin: 0 }}>{user.name} 👋</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: "white", margin: 0 }}>{user.name}</h2>
         {user.email && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "4px 0 0" }}>{user.email}</p>}
       </div>
 
       <p style={{ fontSize: 13, color: "#64748B", marginBottom: 14 }}>How can we help you today?</p>
 
       {[
-        { icon: "📝", label: "Submit a Request", sub: "Report an IT issue or need",    color: "#4F8EF7", bg: "#EEF4FF", action: onNewRequest },
-        { icon: "📂", label: "My Cases",          sub: "Track your past IT requests",  color: "#4FC4A4", bg: "#EDFDF8", action: onMyCases  },
+        { icon: "📝", label: "Submit a Request", sub: "Report an IT issue or need",   color: "#4F8EF7", bg: "#EEF4FF", action: onNewRequest },
+        { icon: "📂", label: "My Cases",          sub: "Track your past IT requests", color: "#4FC4A4", bg: "#EDFDF8", action: onMyCases  },
       ].map((item, i) => (
         <button key={i} onClick={item.action} style={{
           background: "white", border: "1.5px solid #F1F5F9", borderRadius: 14,
@@ -233,8 +232,8 @@ function NewRequestScreen({ user, onBack, onDone }) {
     try {
       await createItem(user, helpType, description, urgency);
       onDone();
-    } catch (err) {
-      alert("Something went wrong submitting your request. Please try again.");
+    } catch {
+      alert("Something went wrong. Please try again.");
     }
     setSubmitting(false);
   };
@@ -247,11 +246,10 @@ function NewRequestScreen({ user, onBack, onDone }) {
 
   return (
     <div style={{ padding: 24, overflowY: "auto", maxHeight: 600 }}>
-      <button onClick={onBack} style={backBtn}>← Back</button>
+      <button onClick={onBack} style={backBtn}>Back</button>
       <h2 style={screenTitle}>New IT Request</h2>
-      <p style={screenSub}>Fill in the details below and we'll get back to you.</p>
+      <p style={screenSub}>Fill in the details below and we will get back to you.</p>
 
-      {/* Submitter — auto-detected */}
       <div style={{ marginBottom: 18 }}>
         <label style={labelStyle}>Submitting as</label>
         <div style={{
@@ -264,11 +262,10 @@ function NewRequestScreen({ user, onBack, onDone }) {
             <div style={{ fontSize: 14, fontWeight: 600, color: "#1E293B" }}>{user.name}</div>
             {user.email && <div style={{ fontSize: 11, color: "#94A3B8" }}>{user.email}</div>}
           </div>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "#4F8EF7", fontWeight: 600 }}>Auto-detected ✓</span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "#4F8EF7", fontWeight: 600 }}>Auto-detected</span>
         </div>
       </div>
 
-      {/* Help type */}
       <div style={{ marginBottom: 18 }}>
         <label style={labelStyle}>What type of IT help do you need? <span style={{ color: "#F76B8A" }}>*</span></label>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -288,7 +285,6 @@ function NewRequestScreen({ user, onBack, onDone }) {
         {errors.helpType && <p style={errorStyle}>{errors.helpType}</p>}
       </div>
 
-      {/* Description */}
       <div style={{ marginBottom: 18 }}>
         <label style={labelStyle}>Please describe the issue or request <span style={{ color: "#F76B8A" }}>*</span></label>
         <p style={{ fontSize: 11, color: "#94A3B8", margin: "0 0 8px" }}>
@@ -304,7 +300,6 @@ function NewRequestScreen({ user, onBack, onDone }) {
         {errors.description && <p style={errorStyle}>{errors.description}</p>}
       </div>
 
-      {/* Urgency */}
       <div style={{ marginBottom: 22 }}>
         <label style={labelStyle}>How urgent is this request? <span style={{ color: "#F76B8A" }}>*</span></label>
         {URGENCY_LEVELS.map(u => (
@@ -329,7 +324,7 @@ function NewRequestScreen({ user, onBack, onDone }) {
       </div>
 
       <button onClick={submit} style={{ ...btnPrimary, width: "100%" }}>
-        Submit Request →
+        Submit Request
       </button>
     </div>
   );
@@ -340,9 +335,9 @@ function DoneScreen({ onHome }) {
   return (
     <div style={{ padding: "48px 24px", textAlign: "center" }}>
       <div style={{ fontSize: 56, marginBottom: 18 }}>✅</div>
-      <h3 style={{ fontSize: 20, fontWeight: 700, color: "#1E293B", margin: "0 0 10px" }}>Request Submitted!</h3>
+      <h3 style={{ fontSize: 20, fontWeight: 700, color: "#1E293B", margin: "0 0 10px" }}>Request Submitted</h3>
       <p style={{ color: "#64748B", fontSize: 14, lineHeight: 1.6, margin: "0 0 8px" }}>Your IT request has been sent to the team.</p>
-      <p style={{ color: "#94A3B8", fontSize: 13, margin: "0 0 28px" }}>Track its progress under <strong>My Cases</strong>.</p>
+      <p style={{ color: "#94A3B8", fontSize: 13, margin: "0 0 28px" }}>Track its progress under My Cases.</p>
       <button onClick={onHome} style={{ ...btnPrimary, width: "auto", display: "inline-block", padding: "12px 32px" }}>
         Back to Home
       </button>
@@ -384,7 +379,7 @@ function MyCasesScreen({ user, onBack }) {
 
   return (
     <div style={{ padding: 24 }}>
-      <button onClick={onBack} style={backBtn}>← Back</button>
+      <button onClick={onBack} style={backBtn}>Back</button>
       <h2 style={screenTitle}>My Cases</h2>
       <p style={screenSub}>IT requests submitted by <strong>{user.name}</strong></p>
 
@@ -400,7 +395,7 @@ function MyCasesScreen({ user, onBack }) {
       {!loading && !error && cases.length === 0 && (
         <div style={{ textAlign: "center", padding: "36px 0" }}>
           <div style={{ fontSize: 44, marginBottom: 12 }}>📭</div>
-          <p style={{ color: "#94A3B8", fontSize: 14 }}>You haven't submitted any IT requests yet.</p>
+          <p style={{ color: "#94A3B8", fontSize: 14 }}>You have not submitted any IT requests yet.</p>
         </div>
       )}
 
@@ -422,7 +417,7 @@ function MyCasesScreen({ user, onBack }) {
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {h && <span style={{ fontSize: 11, color: "#475569", background: "#F1F5F9", borderRadius: 6, padding: "2px 8px" }}>{h.icon} {c.helpType}</span>}
-                    {u && <span style={{ fontSize: 11, color: u.color, background: u.color + "12", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>⚡ {c.urgency}</span>}
+                    {u && <span style={{ fontSize: 11, color: u.color, background: u.color + "12", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>! {c.urgency}</span>}
                     {c.created && <span style={{ fontSize: 11, color: "#CBD5E1", padding: "2px 4px" }}>{c.created}</span>}
                   </div>
                 </div>
@@ -433,7 +428,7 @@ function MyCasesScreen({ user, onBack }) {
             background: "none", border: "none", color: "#94A3B8",
             fontSize: 13, cursor: "pointer", textAlign: "center",
             display: "block", width: "100%", marginTop: 12, fontFamily: "inherit",
-          }}>↻ Refresh</button>
+          }}>Refresh</button>
         </>
       )}
     </div>
@@ -449,7 +444,6 @@ export default function App() {
   if (error) return (
     <div style={{ fontFamily: "DM Sans, sans-serif", minHeight: "100vh", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: "white", borderRadius: 16, padding: 32, maxWidth: 360, textAlign: "center", boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
         <p style={{ color: "#475569", fontSize: 14 }}>{error}</p>
         <button onClick={() => { setError(""); setScreen("loading"); }} style={{ ...btnPrimary, marginTop: 16, width: "auto", padding: "10px 24px" }}>Retry</button>
       </div>
@@ -484,7 +478,6 @@ export default function App() {
   );
 }
 
-// ── SHARED STYLES ─────────────────────────────────────────────────────────────
 const inputStyle  = { width: "100%", boxSizing: "border-box", border: "1.5px solid #E2E8F0", borderRadius: 10, padding: "11px 14px", fontSize: 14, color: "#1E293B", outline: "none", fontFamily: "inherit", background: "white" };
 const btnPrimary  = { background: "linear-gradient(135deg, #4F8EF7, #9B8EF7)", border: "none", borderRadius: 10, padding: "13px", color: "white", fontWeight: 600, fontSize: 14, cursor: "pointer", display: "block", fontFamily: "inherit" };
 const backBtn     = { background: "none", border: "none", color: "#94A3B8", fontSize: 13, cursor: "pointer", padding: "0 0 14px", display: "block", fontFamily: "inherit" };
