@@ -11,7 +11,7 @@ exports.handler = async (event) => {
     };
   }
 
-  if (event.httpMethod !== "POST") {
+  if (event.httpMethod !== "GET") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
