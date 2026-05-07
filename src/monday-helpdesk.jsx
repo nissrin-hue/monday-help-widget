@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 
-const BOARD_ID = "5095581355";
+const BOARD_ID   = "5095581355";
+const CLIENT_ID  = "77b656db205864cf3f984cdcc35289dc";
+const REDIRECT   = "https://monday-it-help-widget.netlify.app/.netlify/functions/oauth-callback";
+const AUTH_URL   = `https://auth.monday.com/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}&scope=me:read boards:read boards:write`;
 
 const COL = {
   submitter:   "multiple_person_mm2xtr55",
@@ -10,23 +13,24 @@ const COL = {
   status:      "color_mm2xvd7",
 };
 
-async function mondayQuery(query) {
+// ── API HELPER ────────────────────────────────────────────────────────────────
+async function mondayQuery(query, userToken) {
   const res = await fetch("/.netlify/functions/monday-proxy", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, token: userToken }),
   });
   const data = await res.json();
   if (data.errors) throw new Error(data.errors[0].message);
   return data.data;
 }
 
-async function getCurrentUser() {
-  const data = await mondayQuery(`query { me { id name email } }`);
+async function getCurrentUser(token) {
+  const data = await mondayQuery(`query { me { id name email } }`, token);
   return data.me;
 }
 
-async function getMyCases(userId) {
+async function getMyCases(userId, token) {
   const data = await mondayQuery(`
     query {
       boards(ids: [${BOARD_ID}]) {
@@ -45,11 +49,11 @@ async function getMyCases(userId) {
         }
       }
     }
-  `);
+  `, token);
   return data.boards[0].items_page.items;
 }
 
-async function createItem(user, helpType, description, urgency) {
+async function createItem(user, helpType, description, urgency, token) {
   const columnValues = JSON.stringify({
     [COL.submitter]:   { personsAndTeams: [{ id: parseInt(user.id), kind: "person" }] },
     [COL.helpType]:    { label: helpType },
@@ -66,9 +70,10 @@ async function createItem(user, helpType, description, urgency) {
         column_values: ${JSON.stringify(columnValues)}
       ) { id }
     }
-  `);
+  `, token);
 }
 
+// ── BOARD DATA ────────────────────────────────────────────────────────────────
 const HELP_TYPES = [
   { label: "Technical issue",      icon: "💻", color: "#fdab3d" },
   { label: "Access request",       icon: "🔑", color: "#00c875" },
@@ -91,6 +96,7 @@ const STATUS_MAP = {
   "Done":              { color: "#00b461", bg: "#EDFBF4" },
 };
 
+// ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
 function Spinner({ label = "Loading..." }) {
   return (
     <div style={{ textAlign: "center", padding: "40px 0" }}>
@@ -131,32 +137,39 @@ function Avatar({ name, size = 28 }) {
   );
 }
 
-function LoadingUser({ onLoaded, onError }) {
-  useEffect(() => {
-    getCurrentUser()
-      .then(user => onLoaded(user))
-      .catch(() => onError("Could not detect your monday.com profile. Please refresh."));
-  }, []);
-
+// ── LOGIN SCREEN ──────────────────────────────────────────────────────────────
+function LoginScreen() {
   return (
-    <div style={{ padding: "60px 24px" }}>
-      <div style={{ textAlign: "center", marginBottom: 24 }}>
-        <div style={{
-          width: 68, height: 68, borderRadius: 20,
+    <div style={{ padding: "48px 24px", textAlign: "center" }}>
+      <div style={{
+        width: 68, height: 68, borderRadius: 20,
+        background: "linear-gradient(135deg, #4F8EF7, #9B8EF7)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 30, margin: "0 auto 20px",
+        boxShadow: "0 8px 24px rgba(79,142,247,0.3)",
+      }}>🤝</div>
+      <h1 style={{ fontSize: 20, fontWeight: 700, color: "#1E293B", margin: "0 0 8px" }}>IT Help Centre</h1>
+      <p style={{ color: "#64748B", fontSize: 14, margin: "0 0 8px" }}>Dublin Does Good</p>
+      <p style={{ color: "#94A3B8", fontSize: 13, margin: "0 0 32px", lineHeight: 1.6 }}>
+        Sign in with your monday.com account to continue.
+      </p>
+      <button
+        onClick={() => { window.location.href = AUTH_URL; }}
+        style={{
           background: "linear-gradient(135deg, #4F8EF7, #9B8EF7)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 30, margin: "0 auto 18px",
-          boxShadow: "0 8px 24px rgba(79,142,247,0.3)",
-        }}>🤝</div>
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: "#1E293B", margin: "0 0 6px" }}>IT Help Centre</h1>
-        <p style={{ color: "#64748B", fontSize: 13, margin: 0 }}>Dublin Does Good</p>
-      </div>
-      <Spinner label="Detecting your monday.com profile..." />
+          border: "none", borderRadius: 10, padding: "13px 32px",
+          color: "white", fontWeight: 600, fontSize: 14,
+          cursor: "pointer", fontFamily: "inherit",
+        }}
+      >
+        Sign in with monday.com
+      </button>
     </div>
   );
 }
 
-function HomeScreen({ user, onNewRequest, onMyCases }) {
+// ── HOME ──────────────────────────────────────────────────────────────────────
+function HomeScreen({ user, onNewRequest, onMyCases, onLogout }) {
   return (
     <div style={{ padding: "28px 24px" }}>
       <div style={{
@@ -165,9 +178,16 @@ function HomeScreen({ user, onNewRequest, onMyCases }) {
         position: "relative", overflow: "hidden",
       }}>
         <div style={{ position: "absolute", top: -20, right: -20, width: 80, height: 80, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
-        <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, margin: "0 0 4px" }}>Hello,</p>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: "white", margin: 0 }}>{user.name}</h2>
-        {user.email && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "4px 0 0" }}>{user.email}</p>}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, margin: "0 0 4px" }}>Hello,</p>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: "white", margin: 0 }}>{user.name}</h2>
+            {user.email && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "4px 0 0" }}>{user.email}</p>}
+          </div>
+          <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, padding: "6px 12px", color: "white", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            Sign out
+          </button>
+        </div>
       </div>
       <p style={{ fontSize: 13, color: "#64748B", marginBottom: 14 }}>How can we help you today?</p>
       {[
@@ -195,7 +215,8 @@ function HomeScreen({ user, onNewRequest, onMyCases }) {
   );
 }
 
-function NewRequestScreen({ user, onBack, onDone }) {
+// ── NEW REQUEST ───────────────────────────────────────────────────────────────
+function NewRequestScreen({ user, token, onBack, onDone }) {
   const [helpType,    setHelpType]    = useState("");
   const [description, setDescription] = useState("");
   const [urgency,     setUrgency]     = useState("");
@@ -215,7 +236,7 @@ function NewRequestScreen({ user, onBack, onDone }) {
     if (!validate()) return;
     setSubmitting(true);
     try {
-      await createItem(user, helpType, description, urgency);
+      await createItem(user, helpType, description, urgency, token);
       onDone();
     } catch {
       alert("Something went wrong. Please try again.");
@@ -237,17 +258,13 @@ function NewRequestScreen({ user, onBack, onDone }) {
 
       <div style={{ marginBottom: 18 }}>
         <label style={labelStyle}>Submitting as</label>
-        <div style={{
-          background: "#F8FAFF", border: "1.5px solid #DBEAFE",
-          borderRadius: 10, padding: "11px 14px",
-          display: "flex", alignItems: "center", gap: 10,
-        }}>
+        <div style={{ background: "#F8FAFF", border: "1.5px solid #DBEAFE", borderRadius: 10, padding: "11px 14px", display: "flex", alignItems: "center", gap: 10 }}>
           <Avatar name={user.name} size={28} />
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#1E293B" }}>{user.name}</div>
             {user.email && <div style={{ fontSize: 11, color: "#94A3B8" }}>{user.email}</div>}
           </div>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "#4F8EF7", fontWeight: 600 }}>Auto-detected</span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "#4F8EF7", fontWeight: 600 }}>Verified</span>
         </div>
       </div>
 
@@ -272,16 +289,10 @@ function NewRequestScreen({ user, onBack, onDone }) {
 
       <div style={{ marginBottom: 18 }}>
         <label style={labelStyle}>Please describe the issue or request <span style={{ color: "#F76B8A" }}>*</span></label>
-        <p style={{ fontSize: 11, color: "#94A3B8", margin: "0 0 8px" }}>
-          Include what happened, when it started, any error messages, and what you need help with.
-        </p>
-        <textarea
-          value={description}
-          onChange={e => { setDescription(e.target.value); setErrors(er => ({ ...er, description: "" })); }}
-          placeholder="Describe your issue in as much detail as possible..."
-          rows={5}
-          style={{ ...inputStyle, resize: "none", lineHeight: 1.6, borderColor: errors.description ? "#F76B8A" : "#E2E8F0" }}
-        />
+        <p style={{ fontSize: 11, color: "#94A3B8", margin: "0 0 8px" }}>Include what happened, when it started, any error messages, and what you need help with.</p>
+        <textarea value={description} onChange={e => { setDescription(e.target.value); setErrors(er => ({ ...er, description: "" })); }}
+          placeholder="Describe your issue in as much detail as possible..." rows={5}
+          style={{ ...inputStyle, resize: "none", lineHeight: 1.6, borderColor: errors.description ? "#F76B8A" : "#E2E8F0" }} />
         {errors.description && <p style={errorStyle}>{errors.description}</p>}
       </div>
 
@@ -296,11 +307,7 @@ function NewRequestScreen({ user, onBack, onDone }) {
             transition: "all 0.15s", textAlign: "left", width: "100%",
             fontFamily: "inherit", marginBottom: 7,
           }}>
-            <div style={{
-              width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-              background: urgency === u.label ? u.color : "#E2E8F0",
-              transition: "all 0.15s",
-            }} />
+            <div style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: urgency === u.label ? u.color : "#E2E8F0", transition: "all 0.15s" }} />
             <span style={{ fontSize: 13, fontWeight: urgency === u.label ? 600 : 400, color: "#1E293B" }}>{u.label}</span>
             <span style={{ fontSize: 11, color: "#94A3B8", marginLeft: 4 }}>— {u.desc}</span>
           </button>
@@ -308,9 +315,7 @@ function NewRequestScreen({ user, onBack, onDone }) {
         {errors.urgency && <p style={errorStyle}>{errors.urgency}</p>}
       </div>
 
-      <button onClick={submit} style={{ ...btnPrimary, width: "100%" }}>
-        Submit Request
-      </button>
+      <button onClick={submit} style={{ ...btnPrimary, width: "100%" }}>Submit Request</button>
     </div>
   );
 }
@@ -322,23 +327,20 @@ function DoneScreen({ onHome }) {
       <h3 style={{ fontSize: 20, fontWeight: 700, color: "#1E293B", margin: "0 0 10px" }}>Request Submitted</h3>
       <p style={{ color: "#64748B", fontSize: 14, lineHeight: 1.6, margin: "0 0 8px" }}>Your IT request has been sent to the team.</p>
       <p style={{ color: "#94A3B8", fontSize: 13, margin: "0 0 28px" }}>Track its progress under My Cases.</p>
-      <button onClick={onHome} style={{ ...btnPrimary, width: "auto", display: "inline-block", padding: "12px 32px" }}>
-        Back to Home
-      </button>
+      <button onClick={onHome} style={{ ...btnPrimary, width: "auto", display: "inline-block", padding: "12px 32px" }}>Back to Home</button>
     </div>
   );
 }
 
-function MyCasesScreen({ user, onBack }) {
+function MyCasesScreen({ user, token, onBack }) {
   const [cases,   setCases]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState("");
 
   const load = async () => {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
-      const items = await getMyCases(user.id);
+      const items = await getMyCases(user.id, token);
       const mapped = items.map(item => {
         const colMap = {};
         item.column_values.forEach(cv => { colMap[cv.id] = cv.text; });
@@ -365,23 +367,19 @@ function MyCasesScreen({ user, onBack }) {
       <button onClick={onBack} style={backBtn}>Back</button>
       <h2 style={screenTitle}>My Cases</h2>
       <p style={screenSub}>IT requests submitted by <strong>{user.name}</strong></p>
-
       {loading && <Spinner label="Loading your cases..." />}
-
       {error && (
         <div style={{ background: "#FFF0F3", border: "1px solid #F76B8A40", borderRadius: 10, padding: 14, color: "#F76B8A", fontSize: 13 }}>
           {error}
           <button onClick={load} style={{ background: "none", border: "none", color: "#F76B8A", fontWeight: 600, cursor: "pointer", marginLeft: 8, fontFamily: "inherit" }}>Retry</button>
         </div>
       )}
-
       {!loading && !error && cases.length === 0 && (
         <div style={{ textAlign: "center", padding: "36px 0" }}>
           <div style={{ fontSize: 44, marginBottom: 12 }}>📭</div>
           <p style={{ color: "#94A3B8", fontSize: 14 }}>You have not submitted any IT requests yet.</p>
         </div>
       )}
-
       {!loading && !error && cases.length > 0 && (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -389,11 +387,7 @@ function MyCasesScreen({ user, onBack }) {
               const u = URGENCY_LEVELS.find(x => x.label === c.urgency);
               const h = HELP_TYPES.find(x => x.label === c.helpType);
               return (
-                <div key={c.id} style={{
-                  background: "white", border: "1.5px solid #F1F5F9",
-                  borderRadius: 12, padding: 16,
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-                }}>
+                <div key={c.id} style={{ background: "white", border: "1.5px solid #F1F5F9", borderRadius: 12, padding: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
                     <p style={{ fontSize: 13, fontWeight: 600, color: "#1E293B", margin: 0, flex: 1 }}>{c.name}</p>
                     <StatusBadge status={c.status} />
@@ -407,30 +401,61 @@ function MyCasesScreen({ user, onBack }) {
               );
             })}
           </div>
-          <button onClick={load} style={{
-            background: "none", border: "none", color: "#94A3B8",
-            fontSize: 13, cursor: "pointer", textAlign: "center",
-            display: "block", width: "100%", marginTop: 12, fontFamily: "inherit",
-          }}>Refresh</button>
+          <button onClick={load} style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 13, cursor: "pointer", textAlign: "center", display: "block", width: "100%", marginTop: 12, fontFamily: "inherit" }}>Refresh</button>
         </>
       )}
     </div>
   );
 }
 
+// ── APP ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState("loading");
   const [user,   setUser]   = useState(null);
-  const [error,  setError]  = useState("");
+  const [token,  setToken]  = useState(null);
 
-  if (error) return (
-    <div style={{ fontFamily: "DM Sans, sans-serif", minHeight: "100vh", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ background: "white", borderRadius: 16, padding: 32, maxWidth: 360, textAlign: "center", boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
-        <p style={{ color: "#475569", fontSize: 14 }}>{error}</p>
-        <button onClick={() => { setError(""); setScreen("loading"); }} style={{ ...btnPrimary, marginTop: 16, width: "auto", padding: "10px 24px" }}>Retry</button>
-      </div>
-    </div>
-  );
+  useEffect(() => {
+    // Check if we're returning from OAuth with a token in the URL
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get("token");
+    const urlError = params.get("error");
+
+    if (urlError) {
+      setScreen("login");
+      window.history.replaceState({}, "", "/");
+      return;
+    }
+
+    if (urlToken) {
+      // Store token in sessionStorage and clean URL
+      sessionStorage.setItem("monday_token", urlToken);
+      window.history.replaceState({}, "", "/");
+      setToken(urlToken);
+      getCurrentUser(urlToken)
+        .then(u => { setUser(u); setScreen("home"); })
+        .catch(() => setScreen("login"));
+      return;
+    }
+
+    // Check for existing token in sessionStorage
+    const savedToken = sessionStorage.getItem("monday_token");
+    if (savedToken) {
+      setToken(savedToken);
+      getCurrentUser(savedToken)
+        .then(u => { setUser(u); setScreen("home"); })
+        .catch(() => { sessionStorage.removeItem("monday_token"); setScreen("login"); });
+      return;
+    }
+
+    setScreen("login");
+  }, []);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("monday_token");
+    setUser(null);
+    setToken(null);
+    setScreen("login");
+  };
 
   return (
     <div style={{
@@ -442,15 +467,15 @@ export default function App() {
       <div style={{
         width: "100%", maxWidth: 420, background: "white",
         borderRadius: 20, boxShadow: "0 4px 40px rgba(0,0,0,0.08)",
-        overflow: "hidden", minHeight: 480,
-        display: "flex", flexDirection: "column",
+        overflow: "hidden", minHeight: 480, display: "flex", flexDirection: "column",
       }}>
         <div style={{ flex: 1 }}>
-          {screen === "loading"     && <LoadingUser onLoaded={u => { setUser(u); setScreen("home"); }} onError={setError} />}
-          {screen === "home"        && <HomeScreen user={user} onNewRequest={() => setScreen("new_request")} onMyCases={() => setScreen("my_cases")} />}
-          {screen === "new_request" && <NewRequestScreen user={user} onBack={() => setScreen("home")} onDone={() => setScreen("done")} />}
+          {screen === "loading"     && <div style={{ padding: 24 }}><Spinner label="Loading..." /></div>}
+          {screen === "login"       && <LoginScreen />}
+          {screen === "home"        && <HomeScreen user={user} onNewRequest={() => setScreen("new_request")} onMyCases={() => setScreen("my_cases")} onLogout={handleLogout} />}
+          {screen === "new_request" && <NewRequestScreen user={user} token={token} onBack={() => setScreen("home")} onDone={() => setScreen("done")} />}
           {screen === "done"        && <DoneScreen onHome={() => setScreen("home")} />}
-          {screen === "my_cases"    && <MyCasesScreen user={user} onBack={() => setScreen("home")} />}
+          {screen === "my_cases"    && <MyCasesScreen user={user} token={token} onBack={() => setScreen("home")} />}
         </div>
         <div style={{ borderTop: "1px solid #F8FAFC", padding: "11px 24px", textAlign: "center" }}>
           <span style={{ color: "#E2E8F0", fontSize: 11 }}>Dublin Does Good · IT Help Centre</span>
