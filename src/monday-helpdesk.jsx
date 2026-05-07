@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 const BOARD_ID   = "5095581355";
 const CLIENT_ID  = "77b656db205864cf3f984cdcc35289dc";
 const REDIRECT   = "https://monday-it-help-widget.netlify.app/.netlify/functions/oauth-callback";
-const AUTH_URL   = `https://auth.monday.com/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}&scope=me:read boards:read boards:write`;
+const AUTH_URL   = `https://auth.monday.com/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}`;
 
 const COL = {
   submitter:   "multiple_person_mm2xtr55",
