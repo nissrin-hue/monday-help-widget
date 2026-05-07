@@ -1,19 +1,32 @@
 exports.handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") {
+    return {
+      statusCode: 200,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+      },
+      body: "",
+    };
+  }
+
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
-  const API_TOKEN = process.env.MONDAY_API_TOKEN;
-
-  if (!API_TOKEN) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "API token not configured" }),
-    };
-  }
-
   try {
-    const { query, variables } = JSON.parse(event.body);
+    const { query, token } = JSON.parse(event.body);
+
+    // Use user's own OAuth token if provided, otherwise fall back to app token
+    const API_TOKEN = token || process.env.MONDAY_API_TOKEN;
+
+    if (!API_TOKEN) {
+      return {
+        statusCode: 401,
+        body: JSON.stringify({ error: "No token provided" }),
+      };
+    }
 
     const response = await fetch("https://api.monday.com/v2", {
       method: "POST",
@@ -22,7 +35,7 @@ exports.handler = async (event) => {
         "Authorization": API_TOKEN,
         "API-Version": "2024-01",
       },
-      body: JSON.stringify({ query, variables }),
+      body: JSON.stringify({ query }),
     });
 
     const data = await response.json();
